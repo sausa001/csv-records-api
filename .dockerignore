@@ -1,0 +1,14 @@
+.venv
+.git
+.github
+.gitignore
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+.env
+bkp
+.vscode
+.DS_Store
+README.md

@@ -1,0 +1,160 @@
+# .github/workflows/ci-cd.yml
+# CI/CD for csv-records-api
+#   PR to main      -> run tests + build image + smoke test (no push)
+#   push to main    -> tests + smoke test + push :latest and :<sha>
+#   push tag v1.2.3 -> tests + smoke test + push :1.2.3, :1.2 and :<sha>
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  IMAGE_NAME: csv-records-api
+
+jobs:
+  # ---------------------------------------------------------------
+  # 1. Unit / API tests with pytest
+  # ---------------------------------------------------------------
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -q --junitxml=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results.xml
+
+  # ---------------------------------------------------------------
+  # 2. Build Docker image, smoke test it, push to Docker Hub
+  # ---------------------------------------------------------------
+  docker:
+    name: Build, smoke test & push image
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/csv-records-api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for arm64 builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=pr
+
+      # Build a single-arch copy into the local Docker engine for testing
+      - name: Build image for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test container
+        run: |
+          docker run -d --name api -p 8000:8000 ${{ env.IMAGE_NAME }}:ci
+
+          echo "Waiting for /health ..."
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health > /dev/null; then
+              echo "API is up"; break
+            fi
+            sleep 1
+            if [ "$i" -eq 30 ]; then
+              echo "API did not start"; docker logs api; exit 1
+            fi
+          done
+
+          curl -fsS http://localhost:8000/health
+          curl -fsS http://localhost:8000/records > /dev/null
+          curl -fsS http://localhost:8000/records/1 > /dev/null
+
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/records/999999)
+          [ "$code" = "404" ] || { echo "Expected 404, got $code"; exit 1; }
+
+          echo "Smoke test passed"
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs api || true
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Multi-arch build (reuses cache from above) and push
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "### Pushed to Docker Hub :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
