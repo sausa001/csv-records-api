@@ -1,0 +1,13 @@
+id,name,email,department,role,city,salary,joining_date,active
+1,Aarav Sharma,aarav.sharma@example.com,Engineering,Backend Developer,Bengaluru,1450000,2021-03-15,true
+2,Priya Nair,priya.nair@example.com,Engineering,Frontend Developer,Kochi,1250000,2022-07-01,true
+3,Rohan Mehta,rohan.mehta@example.com,Data,Data Analyst,Mumbai,1100000,2020-11-20,true
+4,Sneha Iyer,sneha.iyer@example.com,HR,HR Manager,Chennai,1300000,2019-01-10,true
+5,Vikram Singh,vikram.singh@example.com,Sales,Sales Executive,Delhi,950000,2023-02-06,true
+6,Ananya Gupta,ananya.gupta@example.com,Engineering,DevOps Engineer,Pune,1550000,2020-05-25,true
+7,Karan Patel,karan.patel@example.com,Finance,Financial Analyst,Ahmedabad,1050000,2021-09-13,false
+8,Meera Reddy,meera.reddy@example.com,Data,Data Scientist,Hyderabad,1800000,2022-01-17,true
+9,Arjun Das,arjun.das@example.com,Sales,Sales Manager,Kolkata,1400000,2018-06-04,true
+10,Isha Kapoor,isha.kapoor@example.com,Marketing,Content Strategist,Delhi,900000,2023-08-21,true
+11,Nikhil Joshi,nikhil.joshi@example.com,Engineering,QA Engineer,Pune,1000000,2021-12-01,false
+12,Divya Menon,divya.menon@example.com,Marketing,Marketing Manager,Bengaluru,1600000,2019-10-14,true

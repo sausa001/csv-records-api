@@ -8,7 +8,9 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.main import create_app
 
-SAMPLE_CSV = Path(__file__).resolve().parent.parent / "data" / "employees.csv"
+# Fixed test data, separate from the real data/employees.csv so editing the real
+# data never breaks the tests.
+SAMPLE_CSV = Path(__file__).resolve().parent / "data" / "employees.csv"
 API_KEY = "test-secret"
 
 NEW_RECORD = {
