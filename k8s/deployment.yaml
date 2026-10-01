@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csv-records-api
+  namespace: csv-api
+  labels:
+    app: csv-records-api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: csv-records-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0      # keep serving during an update
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: csv-records-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001       # matches appuser in the Dockerfile
+        fsGroup: 1001
+      containers:
+        - name: api
+          # Jenkins replaces this tag on every deploy (jenkins-<build>-<sha>)
+          image: docker.io/saket123/csv-records-api:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: csv-records-api-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false

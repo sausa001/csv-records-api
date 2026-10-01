@@ -1,0 +1,8 @@
+# Non-secret app settings, injected as environment variables (see app/config.py, prefix APP_)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: csv-records-api-config
+  namespace: csv-api
+data:
+  APP_MAX_PAGE_SIZE: "100"
