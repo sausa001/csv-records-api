@@ -10,3 +10,6 @@ bkp/
 .DS_Store
 .vscode/
 test-results.xml
+node_modules/
+frontend/dist/
+*.kubeconfig

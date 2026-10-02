@@ -12,3 +12,7 @@ bkp
 .vscode
 .DS_Store
 README.md
+frontend
+k8s
+jenkins
+Jenkinsfile

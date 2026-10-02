@@ -1,0 +1,76 @@
+# React UI served by nginx; nginx proxies /api/* to the csv-records-api Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csv-records-ui
+  namespace: csv-api
+  labels:
+    app: csv-records-ui
+spec:
+  replicas: 2               # stateless, so more than one is fine
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: csv-records-ui
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: csv-records-ui
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101        # "nginx" user in nginx-unprivileged
+      containers:
+        - name: ui
+          # Jenkins replaces this tag on every deploy (jenkins-<build>-<sha>)
+          image: docker.io/saket123/csv-records-ui:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: API_UPSTREAM
+              value: "csv-records-api:80"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 20m
+              memory: 16Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: csv-records-ui
+  namespace: csv-api
+  labels:
+    app: csv-records-ui
+spec:
+  type: NodePort
+  selector:
+    app: csv-records-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30081

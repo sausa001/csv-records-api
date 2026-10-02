@@ -1,0 +1,14 @@
+# Persistent storage for the API's CSV file (Minikube's default "standard" StorageClass)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: csv-records-api-data
+  namespace: csv-api
+  labels:
+    app: csv-records-api
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
