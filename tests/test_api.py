@@ -3,6 +3,9 @@ import csv
 import io
 
 import pytest
+from fastapi.testclient import TestClient
+
+from app.main import create_app
 
 from tests.conftest import API_KEY
 
@@ -140,9 +143,25 @@ def test_create_record(client, new_record):
     assert client.get("/health").json()["records_loaded"] == 13
 
 
+@pytest.mark.csv_only
 def test_create_persists_to_disk(client, new_record, csv_file):
     client.post("/records", json=new_record)
     assert new_record["email"] in csv_file.read_text()
+
+
+def test_create_survives_restart(settings_for, new_record):
+    """A record written by one app instance is read back by a brand-new one (any backend)."""
+    settings = settings_for()
+    with TestClient(create_app(settings)) as first:
+        rec_id = first.post("/records", json=new_record).json()["id"]
+    with TestClient(create_app(settings)) as second:
+        assert second.get(f"/records/{rec_id}").json()["email"] == new_record["email"]
+        assert second.get("/health").json()["records_loaded"] == 13
+
+
+def test_health_reports_storage(client, backend):
+    expected = {"csv": "csv", "sqlite": "sqlite", "postgres": "postgresql"}[backend]
+    assert client.get("/health").json()["storage"] == expected
 
 
 def test_create_duplicate_email(client, new_record):
@@ -218,6 +237,7 @@ def test_new_id_after_delete_does_not_reuse_max(client, new_record):
 
 
 # ---------- admin reload ----------
+@pytest.mark.csv_only
 def test_reload_picks_up_manual_edits(client, csv_file):
     with csv_file.open("a") as f:
         f.write("50,Manual Add,manual@example.com,HR,Recruiter,Delhi,700000,2024-05-01,true\n")
@@ -227,6 +247,7 @@ def test_reload_picks_up_manual_edits(client, csv_file):
     assert client.get("/records/50").status_code == 200
 
 
+@pytest.mark.csv_only
 def test_reload_bad_csv_keeps_old_data(client, csv_file):
     csv_file.write_text("id,name\n1,Broken\n")
     assert client.post("/admin/reload").status_code == 500

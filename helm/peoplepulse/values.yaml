@@ -1,0 +1,55 @@
+# Defaults. Each environment overrides what it needs:
+#   values-minikube.yaml  local cluster, in-cluster PostgreSQL, NodePorts
+#   values-aws-dev.yaml   EKS, Amazon RDS, ALB ingress
+# The pipeline sets image tags and the database host with --set.
+
+api:
+  replicas: 2
+  image:
+    repository: docker.io/saket123/csv-records-api
+    tag: latest
+    pullPolicy: IfNotPresent
+  maxPageSize: 100
+  seedCsv: /app/data/employees.csv
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+ui:
+  replicas: 2
+  image:
+    repository: docker.io/saket123/csv-records-ui
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 20m, memory: 16Mi}
+    limits: {cpu: 200m, memory: 64Mi}
+
+# Services: ClusterIP on EKS (traffic enters through the ALB); NodePort on Minikube.
+service:
+  type: ClusterIP
+  apiNodePort: 30090
+  uiNodePort: 30091
+
+database:
+  # internal = run PostgreSQL inside the cluster (Minikube / quick DEV)
+  # external = use a managed database such as Amazon RDS
+  mode: internal
+  host: ""              # external mode: the RDS endpoint (the pipeline sets it)
+  port: 5432
+  name: records
+  user: app
+  # Secret holding the password; created by the pipeline, never stored in Git
+  passwordSecret:
+    name: peoplepulse-db
+    key: password
+  internal:
+    image: postgres:16-alpine
+    storage: 1Gi
+
+ingress:
+  enabled: false
+  className: alb
+  host: ""              # e.g. peoplepulse-dev.example.com; empty = the ALB's own DNS name
+  certificateArn: ""    # ACM certificate ARN; empty = HTTP only
+  tags: ""              # extra AWS tags on the load balancer, "Key1=Value1,Key2=Value2"

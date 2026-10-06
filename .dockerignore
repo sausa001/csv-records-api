@@ -16,3 +16,8 @@ frontend
 k8s
 jenkins
 Jenkinsfile
+terraform
+helm
+Jenkinsfile.aws
+docker-compose.yml
+.env*

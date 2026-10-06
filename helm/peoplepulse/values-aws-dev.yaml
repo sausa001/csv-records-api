@@ -1,0 +1,18 @@
+# AWS DEV: EKS (Graviton/arm64 nodes) + Amazon RDS + ALB ingress, images from ECR.
+# The pipeline fills in the account-specific parts with --set (from SSM Parameter Store):
+#   api.image.repository / ui.image.repository  -> ECR repository URLs
+#   api.image.tag / ui.image.tag                -> jenkins-<build>-<sha>
+#   database.host                               -> RDS endpoint
+#   ingress.host / ingress.certificateArn       -> only when a domain is configured
+api:
+  replicas: 2
+ui:
+  replicas: 2
+service:
+  type: ClusterIP
+database:
+  mode: external
+ingress:
+  enabled: true
+  className: alb
+  tags: "Project=peoplepulse,Environment=dev,Owner=Saket.Saurabh@techconsulting.net"  # ALB is created by the controller, so it is tagged here

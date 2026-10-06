@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "peoplepulse.labels" . | nindent 4 }}
+data:
+  APP_MAX_PAGE_SIZE: {{ .Values.api.maxPageSize | quote }}
+  APP_SEED_CSV: {{ .Values.api.seedCsv | quote }}
+  APP_DB_HOST: {{ include "peoplepulse.dbHost" . | quote }}
+  APP_DB_PORT: {{ .Values.database.port | quote }}
+  APP_DB_NAME: {{ .Values.database.name | quote }}
+  APP_DB_USER: {{ .Values.database.user | quote }}

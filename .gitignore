@@ -13,3 +13,14 @@ test-results.xml
 node_modules/
 frontend/dist/
 *.kubeconfig
+# Terraform (commit .terraform.lock.hcl, never state)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+# kubeconfig written by pipelines
+.kube/
+
+# files Claude delivered (zip copies etc.)
+Claude outputs/

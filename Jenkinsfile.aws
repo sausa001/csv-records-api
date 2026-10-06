@@ -1,0 +1,239 @@
+// Jenkinsfile.aws - PeoplePulse on AWS
+// GitHub -> Jenkins -> tests -> Docker build (arm64) -> Amazon ECR -> Helm -> Amazon EKS -> tests through the ALB
+//
+// Everything account-specific comes from SSM Parameter Store (/peoplepulse/<env>/...),
+// written by Terraform (terraform/envs/<env>). Nothing is hard-coded here.
+//
+// Jenkins credentials required (Manage Jenkins -> Credentials):
+//   aws-jenkins   Username with password  (username = access key ID, password = secret access key
+//                                          of the IAM user "peoplepulse-jenkins")
+
+pipeline {
+    agent any
+
+    parameters {
+        choice(name: 'ENV', choices: ['dev'], description: 'Target environment (add uat / prod as you create them)')
+        choice(name: 'DEPLOY_MODE', choices: ['manual', 'auto'],
+               description: 'manual = wait for approval before deploying; auto = deploy straight away')
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '15'))
+        timeout(time: 45, unit: 'MINUTES')
+    }
+
+    triggers {
+        pollSCM('H/2 * * * *')
+    }
+
+    environment {
+        AWS_REGION         = 'us-west-1'
+        AWS_DEFAULT_REGION = 'us-west-1'
+        AWS_ACCOUNT_ID     = '866934333672'   // the pipeline refuses to run against any other account
+        PROJECT            = 'peoplepulse'
+        RELEASE            = 'peoplepulse'
+    }
+
+    stages {
+        stage('Prepare') {
+            steps {
+                script {
+                    env.TARGET = params.ENV ?: 'dev'
+                    env.GIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "jenkins-${env.BUILD_NUMBER}-${env.GIT_SHORT}"
+                    env.KUBECONFIG = "${env.WORKSPACE}/.kube/config"
+                }
+                withCredentials([usernamePassword(credentialsId: 'aws-jenkins',
+                                                  usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                                  passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    script {
+                        def account = sh(returnStdout: true, script: 'aws sts get-caller-identity --query Account --output text').trim()
+                        if (account != env.AWS_ACCOUNT_ID) {
+                            error "AWS credential 'aws-jenkins' belongs to account ${account}, expected ${env.AWS_ACCOUNT_ID}"
+                        }
+                        // Load /peoplepulse/<env>/* into env vars: PP_CLUSTER_NAME, PP_DB_HOST, PP_ECR_API, ...
+                        def params_text = sh(returnStdout: true, script: '''
+                            aws ssm get-parameters-by-path --path "/${PROJECT}/${TARGET}" \
+                              --query 'Parameters[].[Name,Value]' --output text
+                        ''').trim()
+                        params_text.readLines().each { line ->
+                            def parts = line.split('\t')
+                            def key = 'PP_' + parts[0].tokenize('/').last().toUpperCase()
+                            env."${key}" = parts[1]
+                        }
+                        if (!env.PP_CLUSTER_NAME) {
+                            error "No settings found under /${env.PROJECT}/${env.TARGET} - run terraform apply in terraform/envs/${env.TARGET}"
+                        }
+                        env.ECR_REGISTRY = env.PP_ECR_API.tokenize('/')[0]
+                    }
+                }
+                echo "Env ${env.TARGET}: cluster ${env.PP_CLUSTER_NAME}, namespace ${env.PP_NAMESPACE}, tag ${env.IMAGE_TAG}"
+                sh 'aws --version && helm version --short && kubectl version --client'
+            }
+        }
+
+        stage('Tests') {
+            parallel {
+                stage('API: pytest') {
+                    steps { sh 'docker build --target test -t peoplepulse-api:test-${BUILD_NUMBER} .' }
+                }
+                stage('UI: vitest + build') {
+                    steps { sh 'docker build --target test -t peoplepulse-ui:test-${BUILD_NUMBER} frontend' }
+                }
+            }
+        }
+
+        stage('Docker Build (arm64)') {
+            steps {
+                // EKS nodes are Graviton (arm64), the same architecture as Apple Silicon
+                sh '''
+                    docker build --platform linux/arm64 --target runtime \
+                      --label org.opencontainers.image.revision=${GIT_SHORT} \
+                      -t ${PP_ECR_API}:${IMAGE_TAG} .
+                    docker build --platform linux/arm64 --target runtime \
+                      --label org.opencontainers.image.revision=${GIT_SHORT} \
+                      -t ${PP_ECR_UI}:${IMAGE_TAG} frontend
+                '''
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-jenkins',
+                                                  usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                                  passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh '''
+                        aws ecr get-login-password | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                        docker push ${PP_ECR_API}:${IMAGE_TAG}
+                        docker push ${PP_ECR_UI}:${IMAGE_TAG}
+                    '''
+                }
+            }
+            post {
+                always { sh 'docker logout ${ECR_REGISTRY} || true' }
+            }
+        }
+
+        stage('Approve Deploy') {
+            when { expression { params.DEPLOY_MODE != 'auto' } }
+            options { timeout(time: 15, unit: 'MINUTES') }
+            steps {
+                input message: "Deploy ${env.IMAGE_TAG} to ${env.TARGET} (EKS ${env.PP_CLUSTER_NAME})?", ok: 'Deploy'
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-jenkins',
+                                                  usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                                  passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh '''
+                        set -e
+                        mkdir -p "$(dirname "$KUBECONFIG")"
+                        aws eks update-kubeconfig --name "$PP_CLUSTER_NAME" --kubeconfig "$KUBECONFIG"
+
+                        # RDS password: Secrets Manager -> Kubernetes Secret (never printed, never in Git)
+                        set +x
+                        DB_PASSWORD=$(aws secretsmanager get-secret-value --secret-id "$PP_DB_SECRET_ARN" \
+                                        --query SecretString --output text | jq -r .password)
+                        kubectl -n "$PP_NAMESPACE" create secret generic peoplepulse-db \
+                          --from-literal=password="$DB_PASSWORD" --dry-run=client -o yaml | kubectl apply -f -
+                        unset DB_PASSWORD
+
+                        EXTRA=""
+                        if [ "$PP_APP_HOST" != "none" ]; then
+                          EXTRA="--set ingress.host=$PP_APP_HOST --set ingress.certificateArn=$PP_CERTIFICATE_ARN"
+                        fi
+
+                        helm upgrade --install "$RELEASE" helm/peoplepulse \
+                          --namespace "$PP_NAMESPACE" \
+                          -f "helm/peoplepulse/values-aws-${TARGET}.yaml" \
+                          --set api.image.repository="$PP_ECR_API" --set api.image.tag="$IMAGE_TAG" \
+                          --set ui.image.repository="$PP_ECR_UI"   --set ui.image.tag="$IMAGE_TAG" \
+                          --set database.host="$PP_DB_HOST" \
+                          --set database.name="$PP_DB_NAME" \
+                          --set database.user="$PP_DB_USER" \
+                          $EXTRA \
+                          --wait --timeout 10m
+
+                        kubectl -n "$PP_NAMESPACE" get deploy,pods,svc,ingress -o wide
+                        helm -n "$PP_NAMESPACE" history "$RELEASE" --max 5
+                    '''
+                }
+            }
+        }
+
+        stage('Smoke Tests via ALB') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-jenkins',
+                                                  usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                                  passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh '''
+                        set -e
+                        # The ALB is created by the AWS Load Balancer Controller; the first time takes a few minutes
+                        for i in $(seq 1 60); do
+                          ALB=$(kubectl -n "$PP_NAMESPACE" get ingress "$RELEASE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true)
+                          [ -n "$ALB" ] && break
+                          sleep 10
+                        done
+                        [ -n "$ALB" ] || { echo "Ingress has no load balancer yet"; exit 1; }
+                        if [ "$PP_APP_HOST" = "none" ]; then
+                          BASE="http://${ALB}"
+                          CURL="curl -fsS --max-time 15"
+                        else
+                          # HTTPS on the real hostname, connecting straight to the ALB
+                          # (works before the DNS record exists or has propagated)
+                          BASE="https://${PP_APP_HOST}"
+                          CURL="curl -fsS --max-time 15 --connect-to ${PP_APP_HOST}:443:${ALB}:443"
+                        fi
+                        echo "Testing ${BASE} (load balancer ${ALB})"
+
+                        for i in $(seq 1 60); do
+                          $CURL "${BASE}/healthz" > /dev/null 2>&1 && break
+                          sleep 10
+                        done
+
+                        $CURL "${BASE}/" | grep -q '<div id="root">'
+                        $CURL "${BASE}/api/health"  | jq -e '.status == "ok" and .storage == "postgresql"'
+                        $CURL "${BASE}/api/records" | jq -e '.total >= 0'
+                        $CURL "${BASE}/api/records/stats" | jq -e '.total_records >= 0'
+
+                        # Write round trip through ALB -> nginx -> API -> RDS
+                        EMAIL="pipeline-${BUILD_NUMBER}@example.com"
+                        BODY=$(jq -n --arg e "$EMAIL" '{name: "Pipeline Check", email: $e, department: "QA", role: "Smoke test", city: "Pune", salary: 1, joining_date: "2024-01-01"}')
+                        NEW_ID=$($CURL -X POST "${BASE}/api/records" -H 'Content-Type: application/json' -d "$BODY" | jq -r '.id')
+                        $CURL "${BASE}/api/records/${NEW_ID}" | jq -e --arg e "$EMAIL" '.email == $e'
+                        code=$($CURL -o /dev/null -w '%{http_code}' -X DELETE "${BASE}/api/records/${NEW_ID}")
+                        [ "$code" = "204" ] || { echo "Expected 204 on delete, got $code"; exit 1; }
+
+                        echo "All smoke tests passed: ${BASE}"
+                    '''
+                }
+            }
+            post {
+                failure {
+                    withCredentials([usernamePassword(credentialsId: 'aws-jenkins',
+                                                      usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                                      passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                        sh 'helm -n "$PP_NAMESPACE" rollback "$RELEASE" --wait --timeout 5m || true'
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh '''
+                docker rmi peoplepulse-api:test-${BUILD_NUMBER} peoplepulse-ui:test-${BUILD_NUMBER} \
+                  ${PP_ECR_API}:${IMAGE_TAG} ${PP_ECR_UI}:${IMAGE_TAG} 2>/dev/null || true
+                rm -rf "${WORKSPACE}/.kube"
+            '''
+        }
+        success {
+            echo "Deployed ${env.IMAGE_TAG} to ${env.TARGET} (EKS ${env.PP_CLUSTER_NAME}, namespace ${env.PP_NAMESPACE})"
+        }
+    }
+}

@@ -1,0 +1,13 @@
+# Minikube: in-cluster PostgreSQL, NodePorts, images from Docker Hub
+api:
+  image:
+    repository: docker.io/saket123/csv-records-api
+    pullPolicy: Always
+ui:
+  image:
+    repository: docker.io/saket123/csv-records-ui
+    pullPolicy: Always
+service:
+  type: NodePort
+database:
+  mode: internal

@@ -63,6 +63,7 @@ class HealthResponse(BaseModel):
     version: str
     records_loaded: int
     csv_file: str
+    storage: str = "csv"  # "csv" or the database type, e.g. "postgresql"
 
 
 class DepartmentStats(BaseModel):

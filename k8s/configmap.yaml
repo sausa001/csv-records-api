@@ -6,5 +6,5 @@ metadata:
   namespace: csv-api
 data:
   APP_MAX_PAGE_SIZE: "100"
-  # CSV lives on the persistent volume so edits made from the UI survive restarts & deploys
-  APP_CSV_PATH: "/data/employees.csv"
+  # First start on an empty database: the table is filled from this CSV (baked into the image)
+  APP_SEED_CSV: "/app/data/employees.csv"

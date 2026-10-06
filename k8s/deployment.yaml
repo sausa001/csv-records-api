@@ -6,15 +6,17 @@ metadata:
   labels:
     app: csv-records-api
 spec:
-  # One replica: the API keeps records in memory and writes them to one CSV file.
-  # Several replicas would each hold their own copy and drift apart.
-  replicas: 1
+  # Data lives in PostgreSQL, so the API is stateless and can run several replicas
+  replicas: 2
   revisionHistoryLimit: 5
   selector:
     matchLabels:
       app: csv-records-api
   strategy:
-    type: Recreate          # stop the old pod before starting the new one (single writer)
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0      # keep serving during an update
+      maxSurge: 1
   template:
     metadata:
       labels:
@@ -23,28 +25,6 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001       # matches appuser in the Dockerfile
-        fsGroup: 1001
-      initContainers:
-        # First start only: copy the CSV baked into the image onto the empty volume.
-        # Later deploys keep the existing file, so UI edits are not lost.
-        - name: seed-data
-          image: docker.io/saket123/csv-records-api:latest
-          command:
-            - sh
-            - -c
-            - |
-              if [ ! -f /data/employees.csv ]; then
-                cp /app/data/employees.csv /data/employees.csv && echo "Seeded /data/employees.csv"
-              else
-                echo "Keeping existing /data/employees.csv"
-              fi
-              chown -R 1001:1001 /data
-          securityContext:
-            runAsUser: 0
-            runAsNonRoot: false
-          volumeMounts:
-            - name: data
-              mountPath: /data
       containers:
         - name: api
           # Jenkins replaces this tag on every deploy (jenkins-<build>-<sha>)
@@ -56,9 +36,12 @@ spec:
           envFrom:
             - configMapRef:
                 name: csv-records-api-config
-          volumeMounts:
-            - name: data
-              mountPath: /data
+          env:
+            - name: APP_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: database-url
           readinessProbe:
             httpGet:
               path: /health
@@ -69,7 +52,7 @@ spec:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 10
+            initialDelaySeconds: 30   # allows time to wait for the database on first start
             periodSeconds: 15
           resources:
             requests:
@@ -80,7 +63,3 @@ spec:
               memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
-      volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: csv-records-api-data

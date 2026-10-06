@@ -4,6 +4,7 @@
 // Jenkins credentials required (Manage Jenkins -> Credentials):
 //   dockerhub-creds      Username with password  (Docker Hub user + access token)
 //   kubeconfig-minikube  Secret file             (kubeconfig pointing at https://<minikube ip>:8443)
+//   postgres-password    Secret text             (PostgreSQL password; letters and digits only)
 
 pipeline {
     agent any
@@ -107,12 +108,22 @@ pipeline {
 
         stage('Deploy to Minikube') {
             steps {
-                withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG')]) {
+                withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG'),
+                                 string(credentialsId: 'postgres-password', variable: 'PG_PASSWORD')]) {
                     sh '''
                         kubectl apply -f k8s/namespace.yaml
-                        kubectl apply -f k8s/configmap.yaml -f k8s/pvc.yaml -f k8s/service.yaml
 
-                        # API (same image is used by the init container that seeds the CSV)
+                        # Database credentials -> Kubernetes Secret (never stored in Git)
+                        kubectl -n ${K8S_NAMESPACE} create secret generic postgres-credentials \
+                          --from-literal=password="$PG_PASSWORD" \
+                          --from-literal=database-url="postgresql+psycopg://app:${PG_PASSWORD}@postgres:5432/records" \
+                          --dry-run=client -o yaml | kubectl apply -f -
+
+                        # PostgreSQL first, then the API that depends on it
+                        kubectl apply -f k8s/configmap.yaml -f k8s/postgres.yaml -f k8s/service.yaml
+                        kubectl -n ${K8S_NAMESPACE} rollout status statefulset/postgres --timeout=180s
+
+                        # API (on first start it creates the table and seeds it from the CSV in the image)
                         sed "s#image: .*${API_NAME}:.*#image: ${API_IMAGE}:${IMAGE_TAG}#" k8s/deployment.yaml \
                           | kubectl apply -f -
                         kubectl -n ${K8S_NAMESPACE} rollout status deployment/${API_NAME} --timeout=180s
@@ -122,7 +133,7 @@ pipeline {
                           | kubectl apply -f -
                         kubectl -n ${K8S_NAMESPACE} rollout status deployment/${UI_NAME} --timeout=180s
 
-                        kubectl -n ${K8S_NAMESPACE} get deploy,pods,svc,pvc -o wide
+                        kubectl -n ${K8S_NAMESPACE} get deploy,statefulset,pods,svc,pvc -o wide
                     '''
                 }
             }
@@ -158,6 +169,15 @@ pipeline {
                         fi
                         code=$(curl -s -o /dev/null -w '%{http_code}' "${API}/records/999999")
                         [ "$code" = "404" ] || { echo "Expected 404, got $code"; exit 1; }
+                        curl -fsS "${API}/health" | jq -e '.storage == "postgresql"'
+
+                        # Write round trip: create a record in PostgreSQL, read it back, delete it
+                        EMAIL="pipeline-${BUILD_NUMBER}@example.com"
+                        BODY=$(jq -n --arg e "$EMAIL" '{name: "Pipeline Check", email: $e, department: "QA", role: "Smoke test", city: "Pune", salary: 1, joining_date: "2024-01-01"}')
+                        NEW_ID=$(curl -fsS -X POST "${API}/records" -H 'Content-Type: application/json' -d "$BODY" | jq -r '.id')
+                        curl -fsS "${API}/records/${NEW_ID}" | jq -e --arg e "$EMAIL" '.email == $e'
+                        code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${API}/records/${NEW_ID}")
+                        [ "$code" = "204" ] || { echo "Expected 204 on delete, got $code"; exit 1; }
 
                         echo "== UI ${UI}"
                         wait_for "${UI}/healthz"

@@ -1,0 +1,46 @@
+# Full stack on your laptop: PostgreSQL + API + React UI
+#   docker compose up --build        -> UI on http://localhost:3000, API docs on http://localhost:8000/docs
+#   docker compose down              -> stop (data kept in the "pgdata" volume)
+#   docker compose down -v           -> stop and delete the data (next start re-seeds from the CSV)
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: records
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "app", "-d", "records"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      target: runtime
+    environment:
+      APP_DATABASE_URL: postgresql+psycopg://app:${POSTGRES_PASSWORD:-localdev}@db:5432/records
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ui:
+    build:
+      context: ./frontend
+      target: runtime
+    environment:
+      API_UPSTREAM: api:8000
+    ports:
+      - "3000:8080"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

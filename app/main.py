@@ -30,6 +30,7 @@ from app.models import (
     StatsResponse,
 )
 from app.repository import FIELDS, CSVFormatError, DuplicateEmailError, RecordRepository
+from app.db_repository import SqlRecordRepository
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("csv_records_api")
@@ -59,9 +60,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        app.state.repo = RecordRepository(settings.csv_path)
-        logger.info("Loaded %d records from %s", app.state.repo.count(), settings.csv_path)
+        if settings.sqlalchemy_url:
+            app.state.repo = SqlRecordRepository(settings.sqlalchemy_url, seed_csv=settings.seed_csv)
+            app.state.storage = app.state.repo.engine.dialect.name
+            logger.info("Using %s database: %d records", app.state.storage, app.state.repo.count())
+        else:
+            app.state.repo = RecordRepository(settings.csv_path)
+            app.state.storage = "csv"
+            logger.info("Loaded %d records from %s", app.state.repo.count(), settings.csv_path)
         yield
+        if settings.sqlalchemy_url:
+            app.state.repo.engine.dispose()
 
     app = FastAPI(
         title=settings.app_name,
@@ -149,14 +158,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return RedirectResponse(url="/docs")
 
     @app.get("/health", response_model=HealthResponse, tags=["General"])
-    def health(repo: Repo):
-        """Liveness/readiness check: confirms the app is up and the CSV is loaded."""
+    def health(repo: Repo, request: Request):
+        """Liveness/readiness check: confirms the app is up and its data store answers."""
         return HealthResponse(
             status="ok",
             app=settings.app_name,
             version=settings.version,
             records_loaded=repo.count(),
             csv_file=settings.csv_path.name,
+            storage=request.app.state.storage,
         )
 
     # ---------- read endpoints ----------
@@ -288,7 +298,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # ---------- admin ----------
     @app.post("/admin/reload", dependencies=write_deps, responses=UNAUTHORIZED, tags=["Admin"])
     def reload_csv(repo: Repo):
-        """Re-read the CSV from disk (use after editing the file by hand)."""
+        """Re-read the CSV from disk (use after editing the file by hand). With a database, returns the row count."""
         try:
             count = repo.load()
         except (CSVFormatError, FileNotFoundError) as e:

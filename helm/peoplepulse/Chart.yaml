@@ -1,0 +1,6 @@
+apiVersion: v2
+name: peoplepulse
+description: PeoplePulse - FastAPI + React employee records app (API, UI, optional PostgreSQL, ALB ingress)
+type: application
+version: 0.1.0
+appVersion: "1.1.0"
