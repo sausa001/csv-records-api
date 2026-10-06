@@ -195,7 +195,7 @@ export default function App() {
       {toDelete && (
         <ConfirmDialog
           title="Delete employee?"
-          message={`${toDelete.name} (id ${toDelete.id}) will be removed from the CSV file.`}
+          message={`${toDelete.name} (id ${toDelete.id}) will be permanently deleted.`}
           confirmLabel="Delete"
           onConfirm={handleDelete}
           onCancel={() => setToDelete(null)}

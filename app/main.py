@@ -75,7 +75,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=settings.version,
-        description="A REST API that serves and manages employee records stored in a CSV file.",
+        description="PeoplePulse: a REST API that serves and manages employee records (PostgreSQL, or a CSV file for quick local runs).",
         lifespan=lifespan,
     )
     app.state.settings = settings

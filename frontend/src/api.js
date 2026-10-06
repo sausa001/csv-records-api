@@ -1,4 +1,4 @@
-// Thin client for the CSV Records API.
+// Thin client for the PeoplePulse API.
 // All calls go to /api/... ; Vite (dev) or nginx (Kubernetes) forwards them to FastAPI.
 import { buildQuery, errorMessage } from './utils.js'
 

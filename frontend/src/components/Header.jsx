@@ -12,8 +12,8 @@ export default function Header({ health, onRefresh }) {
         <div className="brand">
           <span className="logo" aria-hidden="true">▤</span>
           <div>
-            <h1>CSV Records</h1>
-            <p className="muted small">React · FastAPI · Kubernetes</p>
+            <h1>PeoplePulse</h1>
+            <p className="muted small">Employee records · React · FastAPI · PostgreSQL</p>
           </div>
         </div>
 
