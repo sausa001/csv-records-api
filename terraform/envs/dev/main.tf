@@ -60,7 +60,7 @@ module "rds" {
   name                       = local.name
   vpc_id                     = module.network.vpc_id
   database_subnet_ids        = module.network.database_subnet_ids
-  allowed_security_group_ids = [module.eks.cluster_security_group_id]
+  allowed_security_groups    = { eks_cluster = module.eks.cluster_security_group_id }
   instance_class             = var.db_instance_class
   multi_az                   = var.db_multi_az
   deletion_protection        = var.db_deletion_protection

@@ -16,7 +16,8 @@ resource "aws_security_group" "db" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "from_eks" {
-  for_each                     = toset(var.allowed_security_group_ids)
+  # map with fixed keys: the IDs are only known after apply, the keys are known at plan time
+  for_each                     = var.allowed_security_groups
   security_group_id            = aws_security_group.db.id
   referenced_security_group_id = each.value
   ip_protocol                  = "tcp"

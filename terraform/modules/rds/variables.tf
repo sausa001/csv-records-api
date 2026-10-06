@@ -11,9 +11,9 @@ variable "database_subnet_ids" {
   type = list(string)
 }
 
-variable "allowed_security_group_ids" {
-  description = "Security groups allowed to connect on 5432 (the EKS cluster security group)"
-  type        = list(string)
+variable "allowed_security_groups" {
+  description = "Security groups allowed to connect on 5432, as { name = security group ID }"
+  type        = map(string)
 }
 
 variable "engine_version" {
