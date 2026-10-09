@@ -4,6 +4,7 @@
 #   api.image.tag / ui.image.tag                -> jenkins-<build>-<sha>
 #   database.host                               -> RDS endpoint
 #   ingress.host / ingress.certificateArn       -> only when a domain is configured
+#   events.topicArn / events.queueUrl           -> SNS topic and SQS queue
 api:
   replicas: 2
 ui:
@@ -16,3 +17,7 @@ ingress:
   enabled: true
   className: alb
   tags: "Project=peoplepulse,Environment=dev,Owner=Saket.Saurabh@techconsulting.net"  # ALB is created by the controller, so it is tagged here
+aws:
+  region: us-west-1
+worker:
+  enabled: true

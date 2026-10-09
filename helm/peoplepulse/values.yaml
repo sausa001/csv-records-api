@@ -53,3 +53,25 @@ ingress:
   host: ""              # e.g. peoplepulse-dev.example.com; empty = the ALB's own DNS name
   certificateArn: ""    # ACM certificate ARN; empty = HTTP only
   tags: ""              # extra AWS tags on the load balancer, "Key1=Value1,Key2=Value2"
+
+# Region for AWS SDK calls (SNS/SQS). Empty when not running on AWS.
+aws:
+  region: ""
+
+# Prometheus: annotate pods so the kube-prometheus-stack scrape job finds /metrics
+metrics:
+  enabled: true
+
+# Domain events: the API publishes record.created/updated/deleted to SNS; the worker
+# reads them from SQS. Empty topicArn = events off (Minikube, local runs).
+events:
+  topicArn: ""
+  queueUrl: ""
+
+worker:
+  enabled: false
+  replicas: 1
+  metricsPort: 9101
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}

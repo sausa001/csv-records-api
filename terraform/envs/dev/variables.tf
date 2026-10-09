@@ -135,3 +135,10 @@ variable "monthly_budget_usd" {
   type        = number
   default     = 100
 }
+
+# ---------- events (SNS + SQS) ----------
+variable "new_employee_email" {
+  description = "E-mail notified (via SNS) whenever an employee is created. Empty = none."
+  type        = string
+  default     = ""
+}

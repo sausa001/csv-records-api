@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Annotated, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request, Response, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Path, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 
@@ -31,6 +31,8 @@ from app.models import (
 )
 from app.repository import FIELDS, CSVFormatError, DuplicateEmailError, RecordRepository
 from app.db_repository import SqlRecordRepository
+from app.events import CREATED, DELETED, UPDATED, EventPublisher
+from app.metrics import install_metrics
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("csv_records_api")
@@ -68,6 +70,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             app.state.repo = RecordRepository(settings.csv_path)
             app.state.storage = "csv"
             logger.info("Loaded %d records from %s", app.state.repo.count(), settings.csv_path)
+        metrics.track_records(app.state.repo.count)
         yield
         if settings.sqlalchemy_url:
             app.state.repo.engine.dispose()
@@ -79,6 +82,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    metrics = install_metrics(app)
+    # Tests may replace app.state.events with a fake publisher
+    app.state.events = EventPublisher(settings.events_topic_arn, settings.aws_region, metrics=metrics)
 
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -100,7 +106,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if settings.api_key and x_api_key != settings.api_key:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing or invalid API key")
 
+    def get_events(request: Request) -> EventPublisher:
+        return request.app.state.events
+
     Repo = Annotated[RecordRepository, Depends(get_repo)]
+    Events = Annotated[EventPublisher, Depends(get_events)]
     RecordId = Annotated[int, Path(ge=1, description="Record id")]
     write_deps = [Depends(require_api_key)]
 
@@ -254,18 +264,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # ---------- write endpoints ----------
     @app.post("/records", response_model=Record, status_code=status.HTTP_201_CREATED,
               dependencies=write_deps, responses={**CONFLICT, **UNAUTHORIZED}, tags=["Records"])
-    def create_record(data: RecordCreate, repo: Repo, response: Response):
+    def create_record(data: RecordCreate, repo: Repo, response: Response, events: Events, tasks: BackgroundTasks):
         """Create a record. The id is assigned automatically."""
         try:
             rec = repo.create(data)
         except DuplicateEmailError as e:
             raise HTTPException(status.HTTP_409_CONFLICT, str(e))
         response.headers["Location"] = f"/records/{rec.id}"
+        tasks.add_task(events.publish, CREATED, rec.id, rec)
         return rec
 
     @app.put("/records/{record_id}", response_model=Record, dependencies=write_deps,
              responses={**NOT_FOUND, **CONFLICT, **UNAUTHORIZED}, tags=["Records"])
-    def replace_record(record_id: RecordId, data: RecordUpdate, repo: Repo):
+    def replace_record(record_id: RecordId, data: RecordUpdate, repo: Repo, events: Events, tasks: BackgroundTasks):
         """Replace every field of a record."""
         try:
             rec = repo.replace(record_id, data)
@@ -273,11 +284,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(status.HTTP_409_CONFLICT, str(e))
         if rec is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Record {record_id} not found")
+        tasks.add_task(events.publish, UPDATED, rec.id, rec)
         return rec
 
     @app.patch("/records/{record_id}", response_model=Record, dependencies=write_deps,
                responses={**NOT_FOUND, **CONFLICT, **UNAUTHORIZED}, tags=["Records"])
-    def update_record(record_id: RecordId, data: RecordPatch, repo: Repo):
+    def update_record(record_id: RecordId, data: RecordPatch, repo: Repo, events: Events, tasks: BackgroundTasks):
         """Update only the fields you send."""
         try:
             rec = repo.patch(record_id, data)
@@ -285,15 +297,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(status.HTTP_409_CONFLICT, str(e))
         if rec is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Record {record_id} not found")
+        tasks.add_task(events.publish, UPDATED, rec.id, rec)
         return rec
 
     @app.delete("/records/{record_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=write_deps,
                 responses={**NOT_FOUND, **UNAUTHORIZED}, tags=["Records"])
-    def delete_record(record_id: RecordId, repo: Repo):
+    def delete_record(record_id: RecordId, repo: Repo, events: Events, tasks: BackgroundTasks):
         """Delete a record."""
         if not repo.delete(record_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Record {record_id} not found")
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        tasks.add_task(events.publish, DELETED, record_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT, background=tasks)
 
     # ---------- admin ----------
     @app.post("/admin/reload", dependencies=write_deps, responses=UNAUTHORIZED, tags=["Admin"])

@@ -11,3 +11,8 @@ data:
   APP_DB_PORT: {{ .Values.database.port | quote }}
   APP_DB_NAME: {{ .Values.database.name | quote }}
   APP_DB_USER: {{ .Values.database.user | quote }}
+  APP_EVENTS_TOPIC_ARN: {{ .Values.events.topicArn | quote }}
+  {{- with .Values.aws.region }}
+  AWS_REGION: {{ . | quote }}
+  AWS_DEFAULT_REGION: {{ . | quote }}
+  {{- end }}

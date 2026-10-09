@@ -155,6 +155,8 @@ pipeline {
                           --set database.host="$PP_DB_HOST" \
                           --set database.name="$PP_DB_NAME" \
                           --set database.user="$PP_DB_USER" \
+                          --set events.topicArn="$PP_EVENTS_TOPIC_ARN" \
+                          --set events.queueUrl="$PP_EVENTS_QUEUE_URL" \
                           $EXTRA \
                           --wait --timeout 10m
 
@@ -207,6 +209,16 @@ pipeline {
                         $CURL "${BASE}/api/records/${NEW_ID}" | jq -e --arg e "$EMAIL" '.email == $e'
                         code=$($CURL -o /dev/null -w '%{http_code}' -X DELETE "${BASE}/api/records/${NEW_ID}")
                         [ "$code" = "204" ] || { echo "Expected 204 on delete, got $code"; exit 1; }
+
+                        # Event path: API -> SNS -> SQS -> worker. The worker logs one AUDIT line per event.
+                        for i in $(seq 1 12); do
+                          if kubectl -n "$PP_NAMESPACE" logs deploy/"$RELEASE"-worker --since=5m 2>/dev/null \
+                               | grep -q "AUDIT record.created record=${NEW_ID} "; then
+                            echo "Event for record ${NEW_ID} reached the worker"; break
+                          fi
+                          [ "$i" = "12" ] && { echo "Worker never received record.created for ${NEW_ID}"; exit 1; }
+                          sleep 5
+                        done
 
                         echo "All smoke tests passed: ${BASE}"
                     '''

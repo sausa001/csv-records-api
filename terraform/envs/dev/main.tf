@@ -137,7 +137,9 @@ resource "aws_ssm_parameter" "settings" {
     ecr_api         = data.aws_ecr_repository.api.repository_url
     ecr_ui          = data.aws_ecr_repository.ui.repository_url
     app_host        = local.app_host == "" ? "none" : local.app_host
-    certificate_arn = var.domain_name == "" ? "none" : aws_acm_certificate_validation.app[0].certificate_arn
+    certificate_arn  = var.domain_name == "" ? "none" : aws_acm_certificate_validation.app[0].certificate_arn
+    events_topic_arn = aws_sns_topic.events.arn
+    events_queue_url = aws_sqs_queue.events.url
   }
   name  = "${local.ssm_prefix}/${each.key}"
   type  = "String"

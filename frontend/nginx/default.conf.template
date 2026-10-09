@@ -6,6 +6,11 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Prometheus metrics are scraped inside the cluster only; never expose them publicly
+    location = /api/metrics {
+        return 404;
+    }
+
     # React app calls /api/... -> forwarded to FastAPI with the /api prefix stripped
     location /api/ {
         proxy_pass http://${API_UPSTREAM}/;

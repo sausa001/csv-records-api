@@ -38,3 +38,11 @@ output "settings_path" {
   description = "SSM Parameter Store path the pipeline reads"
   value       = local.ssm_prefix
 }
+
+output "events_topic_arn" {
+  value = aws_sns_topic.events.arn
+}
+
+output "events_queue_url" {
+  value = aws_sqs_queue.events.url
+}

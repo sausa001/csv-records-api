@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     db_password: str = ""
     # Neither set = use the CSV file at csv_path (handy for quick local runs).
 
+    # ---- Events (Amazon SNS) ---------------------------------------------
+    # Topic for record.created / record.updated / record.deleted. Empty = events off.
+    events_topic_arn: str = ""
+    aws_region: str = ""
+
     # When the database table is empty on first start, it is filled from this CSV.
     seed_csv: Path = BASE_DIR / "data" / "employees.csv"
 

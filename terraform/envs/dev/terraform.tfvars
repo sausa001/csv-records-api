@@ -5,7 +5,7 @@
 
 # REQUIRED: your public IP so only you can reach the Kubernetes API
 #   curl -s https://checkip.amazonaws.com
-eks_public_access_cidrs = ["223.181.30.83/32"]
+eks_public_access_cidrs = ["223.181.24.148/32"]
 
 kubernetes_version = "1.35" # confirm: aws eks describe-cluster-versions --default-only --region us-west-1
 # us-west-1 offers 2 Availability Zones to most accounts: keep az_count at its default of 2
@@ -27,3 +27,6 @@ alarm_email = "" # e.g. "Saket.Saurabh@techconsulting.net" (also receives the bu
 # Cost tracking: every resource is tagged Owner=<owner>; the budget watches that tag
 owner              = "Saket.Saurabh@techconsulting.net"
 monthly_budget_usd = 100
+
+# Optional: e-mail for every new employee (SNS, filtered to record.created). Empty = none.
+new_employee_email = ""

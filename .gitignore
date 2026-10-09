@@ -24,3 +24,6 @@ crash.log
 
 # files Claude delivered (zip copies etc.)
 Claude outputs/
+
+# temporary transfer files from Claude
+.pp-*.tgz
