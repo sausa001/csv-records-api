@@ -21,7 +21,7 @@ kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
 
 # Grafana admin password: generated once per cluster, stored only in a Kubernetes Secret
 if ! kubectl -n "$NS" get secret grafana-admin >/dev/null 2>&1; then
-  PASS=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
+  PASS=$(openssl rand -hex 16)   # 32 random characters (no pipe: safe with 'set -o pipefail')
   kubectl -n "$NS" create secret generic grafana-admin \
     --from-literal=admin-user=admin --from-literal=admin-password="$PASS"
 fi
